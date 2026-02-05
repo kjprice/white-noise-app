@@ -1,41 +1,16 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-function generateWhiteNoiseWav(durationSeconds = 5, sampleRate = 44100) {
-  const numSamples = durationSeconds * sampleRate;
-  const fadeLength = Math.floor(sampleRate * 0.3); // 300ms crossfade
-
-  // Generate extra samples beyond the end for crossfading
-  const rawNoise = new Float32Array(numSamples + fadeLength);
-  for (let i = 0; i < rawNoise.length; i++) {
-    rawNoise[i] = (Math.random() * 2 - 1) * 0.5;
-  }
-
-  const samples = new Float32Array(numSamples);
-
-  // Copy main body directly (everything after the fade region)
-  for (let i = fadeLength; i < numSamples; i++) {
-    samples[i] = rawNoise[i];
-  }
-
-  // Crossfade the beginning with the "continuation" samples past the end
-  // This makes the loop seamless because:
-  // - samples[numSamples-1] = rawNoise[numSamples-1]
-  // - samples[0] ≈ rawNoise[numSamples] (the natural continuation)
-  for (let i = 0; i < fadeLength; i++) {
-    // Cosine crossfade for smooth S-curve
-    const t = (1 - Math.cos((i / fadeLength) * Math.PI)) / 2;
-    // At i=0: t≈0, so we get mostly rawNoise[numSamples] (continuation)
-    // At i=fadeLength: t=1, so we get rawNoise[fadeLength] (original)
-    samples[i] = rawNoise[i] * t + rawNoise[numSamples + i] * (1 - t);
-  }
-
-  // Build WAV file
+// Tiny silent WAV to keep audio session alive on mobile
+function createSilentWav() {
+  const sampleRate = 44100;
+  const duration = 1;
+  const numSamples = sampleRate * duration;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
 
-  const writeString = (offset, string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
     }
   };
 
@@ -52,58 +27,103 @@ function generateWhiteNoiseWav(durationSeconds = 5, sampleRate = 44100) {
   view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, numSamples * 2, true);
-
-  for (let i = 0; i < numSamples; i++) {
-    view.setInt16(44 + i * 2, samples[i] * 32767, true);
-  }
+  // Samples are all zeros (silent)
 
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
 export function useWhiteNoise() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const audioRef = useRef(null);
-  const blobUrlRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const noiseNodeRef = useRef(null);
+  const gainNodeRef = useRef(null);
+  const silentAudioRef = useRef(null);
+  const silentUrlRef = useRef(null);
 
-  const getAudio = useCallback(() => {
-    if (!audioRef.current) {
-      const blob = generateWhiteNoiseWav(5);
-      blobUrlRef.current = URL.createObjectURL(blob);
+  // Create white noise buffer that loops seamlessly via Web Audio API
+  const createWhiteNoiseBuffer = useCallback((audioContext) => {
+    const sampleRate = audioContext.sampleRate;
+    const duration = 2; // 2 seconds is plenty for noise
+    const numSamples = sampleRate * duration;
 
-      audioRef.current = new Audio(blobUrlRef.current);
-      audioRef.current.loop = true;
-      audioRef.current.volume = 0.5;
+    const buffer = audioContext.createBuffer(1, numSamples, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < numSamples; i++) {
+      data[i] = Math.random() * 2 - 1;
     }
-    return audioRef.current;
+
+    return buffer;
   }, []);
 
   const play = useCallback(async () => {
-    const audio = getAudio();
+    // Initialize audio context
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const audioContext = audioContextRef.current;
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    // Stop existing noise
+    if (noiseNodeRef.current) {
+      noiseNodeRef.current.stop();
+    }
+
+    // Create and play white noise via Web Audio API (seamless looping!)
+    const buffer = createWhiteNoiseBuffer(audioContext);
+    const noiseNode = audioContext.createBufferSource();
+    noiseNode.buffer = buffer;
+    noiseNode.loop = true; // Web Audio API loops seamlessly!
+
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = 0.5;
+
+    noiseNode.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    noiseNode.start();
+
+    noiseNodeRef.current = noiseNode;
+    gainNodeRef.current = gainNode;
+
+    // Start silent audio to keep mobile audio session alive
+    if (!silentAudioRef.current) {
+      silentUrlRef.current = URL.createObjectURL(createSilentWav());
+      silentAudioRef.current = new Audio(silentUrlRef.current);
+      silentAudioRef.current.loop = true;
+      silentAudioRef.current.volume = 0.01; // Nearly silent
+    }
 
     try {
-      await audio.play();
-      setIsPlaying(true);
-
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'White Noise',
-          artist: 'White Noise App',
-          album: 'Sleep Sounds',
-        });
-
-        navigator.mediaSession.setActionHandler('play', () => play());
-        navigator.mediaSession.setActionHandler('pause', () => stop());
-        navigator.mediaSession.setActionHandler('stop', () => stop());
-      }
+      await silentAudioRef.current.play();
     } catch (e) {
-      console.error('Playback failed:', e);
+      console.log('Silent audio failed, background playback may not work');
     }
-  }, [getAudio]);
+
+    setIsPlaying(true);
+
+    // Media Session for lock screen controls
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'White Noise',
+        artist: 'White Noise App',
+        album: 'Sleep Sounds',
+      });
+      navigator.mediaSession.setActionHandler('play', () => play());
+      navigator.mediaSession.setActionHandler('pause', () => stop());
+      navigator.mediaSession.setActionHandler('stop', () => stop());
+    }
+  }, [createWhiteNoiseBuffer]);
 
   const stop = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (noiseNodeRef.current) {
+      noiseNodeRef.current.stop();
+      noiseNodeRef.current = null;
+    }
+    if (silentAudioRef.current) {
+      silentAudioRef.current.pause();
     }
     setIsPlaying(false);
   }, []);
@@ -118,11 +138,17 @@ export function useWhiteNoise() {
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
+      if (noiseNodeRef.current) {
+        noiseNodeRef.current.stop();
       }
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+      }
+      if (silentUrlRef.current) {
+        URL.revokeObjectURL(silentUrlRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
       }
     };
   }, []);
