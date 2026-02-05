@@ -5,6 +5,8 @@ export function useWhiteNoise() {
   const audioContextRef = useRef(null);
   const noiseNodeRef = useRef(null);
   const gainNodeRef = useRef(null);
+  const audioElementRef = useRef(null);
+  const mediaStreamDestRef = useRef(null);
 
   const createWhiteNoise = useCallback((audioContext) => {
     const bufferSize = 2 * audioContext.sampleRate;
@@ -42,14 +44,37 @@ export function useWhiteNoise() {
     gainNode.gain.value = 0.5;
 
     noiseNode.connect(gainNode);
+
+    // Create MediaStream destination for background playback on mobile
+    // This pipes audio to an <audio> element which browsers allow in background
+    if (!mediaStreamDestRef.current) {
+      mediaStreamDestRef.current = audioContext.createMediaStreamDestination();
+    }
+
+    if (!audioElementRef.current) {
+      audioElementRef.current = new Audio();
+      audioElementRef.current.srcObject = mediaStreamDestRef.current.stream;
+      audioElementRef.current.loop = true;
+    }
+
+    // Connect to both destinations
     gainNode.connect(audioContext.destination);
+    gainNode.connect(mediaStreamDestRef.current);
+
     noiseNode.start();
+
+    // Play through audio element for background support
+    try {
+      await audioElementRef.current.play();
+    } catch (e) {
+      console.log('Audio element play failed, falling back to Web Audio only');
+    }
 
     noiseNodeRef.current = noiseNode;
     gainNodeRef.current = gainNode;
     setIsPlaying(true);
 
-    // Set up Media Session for background playback
+    // Set up Media Session for lock screen controls
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: 'White Noise',
@@ -57,8 +82,9 @@ export function useWhiteNoise() {
         album: 'Sleep Sounds',
       });
 
-      navigator.mediaSession.setActionHandler('play', play);
-      navigator.mediaSession.setActionHandler('pause', stop);
+      navigator.mediaSession.setActionHandler('play', () => play());
+      navigator.mediaSession.setActionHandler('pause', () => stop());
+      navigator.mediaSession.setActionHandler('stop', () => stop());
     }
   }, [createWhiteNoise]);
 
@@ -66,6 +92,9 @@ export function useWhiteNoise() {
     if (noiseNodeRef.current) {
       noiseNodeRef.current.stop();
       noiseNodeRef.current = null;
+    }
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
     }
     setIsPlaying(false);
   }, []);
@@ -83,6 +112,10 @@ export function useWhiteNoise() {
     return () => {
       if (noiseNodeRef.current) {
         noiseNodeRef.current.stop();
+      }
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current.srcObject = null;
       }
       if (audioContextRef.current) {
         audioContextRef.current.close();
