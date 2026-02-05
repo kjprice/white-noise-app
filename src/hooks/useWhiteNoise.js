@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-function generateWhiteNoiseWav(durationSeconds = 10, sampleRate = 44100) {
+function generateWhiteNoiseWav(durationSeconds = 30, sampleRate = 44100) {
   const numSamples = durationSeconds * sampleRate;
+  const fadeLength = Math.floor(sampleRate * 0.5); // 0.5 second crossfade
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
 
@@ -16,20 +17,39 @@ function generateWhiteNoiseWav(durationSeconds = 10, sampleRate = 44100) {
   view.setUint32(4, 36 + numSamples * 2, true);
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
-  view.setUint32(16, 16, true); // chunk size
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // byte rate
-  view.setUint16(32, 2, true); // block align
-  view.setUint16(34, 16, true); // bits per sample
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, numSamples * 2, true);
 
   // Generate white noise samples
+  const samples = new Float32Array(numSamples);
   for (let i = 0; i < numSamples; i++) {
-    const sample = (Math.random() * 2 - 1) * 0.5 * 32767;
-    view.setInt16(44 + i * 2, sample, true);
+    samples[i] = (Math.random() * 2 - 1) * 0.5;
+  }
+
+  // Apply crossfade: fade out at end, fade in at start
+  // This creates a smooth loop when the audio repeats
+  for (let i = 0; i < fadeLength; i++) {
+    const fadeIn = i / fadeLength;
+    const fadeOut = 1 - fadeIn;
+
+    // Blend end into start for seamless loop
+    const endIdx = numSamples - fadeLength + i;
+    const blended = samples[i] * fadeIn + samples[endIdx] * fadeOut;
+
+    samples[i] = blended;
+    samples[endIdx] = blended;
+  }
+
+  // Write samples to buffer
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, samples[i] * 32767, true);
   }
 
   return new Blob([buffer], { type: 'audio/wav' });
@@ -40,10 +60,9 @@ export function useWhiteNoise() {
   const audioRef = useRef(null);
   const blobUrlRef = useRef(null);
 
-  // Generate audio on first use
   const getAudio = useCallback(() => {
     if (!audioRef.current) {
-      const blob = generateWhiteNoiseWav(10);
+      const blob = generateWhiteNoiseWav(30);
       blobUrlRef.current = URL.createObjectURL(blob);
 
       audioRef.current = new Audio(blobUrlRef.current);
@@ -60,7 +79,6 @@ export function useWhiteNoise() {
       await audio.play();
       setIsPlaying(true);
 
-      // Set up Media Session for lock screen controls
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: 'White Noise',
@@ -93,7 +111,6 @@ export function useWhiteNoise() {
     }
   }, [isPlaying, play, stop]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (audioRef.current) {
