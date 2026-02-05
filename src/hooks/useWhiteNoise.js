@@ -2,11 +2,37 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 
 function generateWhiteNoiseWav(durationSeconds = 5, sampleRate = 44100) {
   const numSamples = durationSeconds * sampleRate;
-  const fadeLength = Math.floor(sampleRate * 0.5); // 0.5 second crossfade
+  const fadeLength = Math.floor(sampleRate * 0.3); // 300ms crossfade
+
+  // Generate extra samples beyond the end for crossfading
+  const rawNoise = new Float32Array(numSamples + fadeLength);
+  for (let i = 0; i < rawNoise.length; i++) {
+    rawNoise[i] = (Math.random() * 2 - 1) * 0.5;
+  }
+
+  const samples = new Float32Array(numSamples);
+
+  // Copy main body directly (everything after the fade region)
+  for (let i = fadeLength; i < numSamples; i++) {
+    samples[i] = rawNoise[i];
+  }
+
+  // Crossfade the beginning with the "continuation" samples past the end
+  // This makes the loop seamless because:
+  // - samples[numSamples-1] = rawNoise[numSamples-1]
+  // - samples[0] ≈ rawNoise[numSamples] (the natural continuation)
+  for (let i = 0; i < fadeLength; i++) {
+    // Cosine crossfade for smooth S-curve
+    const t = (1 - Math.cos((i / fadeLength) * Math.PI)) / 2;
+    // At i=0: t≈0, so we get mostly rawNoise[numSamples] (continuation)
+    // At i=fadeLength: t=1, so we get rawNoise[fadeLength] (original)
+    samples[i] = rawNoise[i] * t + rawNoise[numSamples + i] * (1 - t);
+  }
+
+  // Build WAV file
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
 
-  // WAV header
   const writeString = (offset, string) => {
     for (let i = 0; i < string.length; i++) {
       view.setUint8(offset + i, string.charCodeAt(i));
@@ -27,27 +53,6 @@ function generateWhiteNoiseWav(durationSeconds = 5, sampleRate = 44100) {
   writeString(36, 'data');
   view.setUint32(40, numSamples * 2, true);
 
-  // Generate white noise samples
-  const samples = new Float32Array(numSamples);
-  for (let i = 0; i < numSamples; i++) {
-    samples[i] = (Math.random() * 2 - 1) * 0.5;
-  }
-
-  // Apply crossfade: fade out at end, fade in at start
-  // This creates a smooth loop when the audio repeats
-  for (let i = 0; i < fadeLength; i++) {
-    const fadeIn = i / fadeLength;
-    const fadeOut = 1 - fadeIn;
-
-    // Blend end into start for seamless loop
-    const endIdx = numSamples - fadeLength + i;
-    const blended = samples[i] * fadeIn + samples[endIdx] * fadeOut;
-
-    samples[i] = blended;
-    samples[endIdx] = blended;
-  }
-
-  // Write samples to buffer
   for (let i = 0; i < numSamples; i++) {
     view.setInt16(44 + i * 2, samples[i] * 32767, true);
   }
