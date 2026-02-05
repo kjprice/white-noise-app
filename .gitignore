@@ -24,3 +24,16 @@ dist-ssr
 *.sw?
 .claude-logs
 .claude/data/sessions
+
+# Expo
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Vite
+.vite

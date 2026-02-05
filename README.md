@@ -1,31 +1,45 @@
 # White Noise App
 
-A simple white noise app for mobile browsers. Generates white noise programmatically using the Web Audio API.
+A simple white noise app for sleep. Available as a web app and native mobile app.
+
+## Web App
 
 **Live:** https://kjprice.github.io/white-noise-app
 
-## Quick Start
-
 ```bash
-# Install dependencies
+cd web
 npm install
-
-# Run locally
-./bin/dev.sh
-
-# Deploy to GitHub Pages
-./bin/deploy.sh
+./bin/dev.sh      # Run locally
+./bin/deploy.sh   # Deploy to GitHub Pages
 ```
 
-## Scripts
+## Native App (iOS & Android)
 
-| Script | Description |
-|--------|-------------|
-| `./bin/dev.sh` | Start local dev server |
-| `./bin/deploy.sh` | Build and deploy to GitHub Pages |
+Built with Expo. Supports background audio playback.
+
+```bash
+cd native
+npm install
+npx expo start    # Start dev server
+
+# Then press:
+# i - open iOS simulator
+# a - open Android emulator
+# Scan QR with Expo Go app on your phone
+```
+
+### Building for Production
+
+```bash
+# Build for iOS
+npx expo build:ios
+
+# Build for Android
+npx expo build:android
+```
 
 ## Features
 
 - Programmatic white noise generation (no audio files)
-- Mobile-friendly dark UI
-- Background playback via Media Session API
+- Background playback (keeps playing when screen locks)
+- Dark theme optimized for sleep
