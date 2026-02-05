@@ -1,100 +1,86 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
+function generateWhiteNoiseWav(durationSeconds = 10, sampleRate = 44100) {
+  const numSamples = durationSeconds * sampleRate;
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+
+  // WAV header
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(36, 'data');
+  view.setUint32(40, numSamples * 2, true);
+
+  // Generate white noise samples
+  for (let i = 0; i < numSamples; i++) {
+    const sample = (Math.random() * 2 - 1) * 0.5 * 32767;
+    view.setInt16(44 + i * 2, sample, true);
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
 export function useWhiteNoise() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const audioContextRef = useRef(null);
-  const noiseNodeRef = useRef(null);
-  const gainNodeRef = useRef(null);
-  const audioElementRef = useRef(null);
-  const mediaStreamDestRef = useRef(null);
+  const audioRef = useRef(null);
+  const blobUrlRef = useRef(null);
 
-  const createWhiteNoise = useCallback((audioContext) => {
-    const bufferSize = 2 * audioContext.sampleRate;
-    const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-    const output = noiseBuffer.getChannelData(0);
+  // Generate audio on first use
+  const getAudio = useCallback(() => {
+    if (!audioRef.current) {
+      const blob = generateWhiteNoiseWav(10);
+      blobUrlRef.current = URL.createObjectURL(blob);
 
-    for (let i = 0; i < bufferSize; i++) {
-      output[i] = Math.random() * 2 - 1;
+      audioRef.current = new Audio(blobUrlRef.current);
+      audioRef.current.loop = true;
+      audioRef.current.volume = 0.5;
     }
-
-    const whiteNoise = audioContext.createBufferSource();
-    whiteNoise.buffer = noiseBuffer;
-    whiteNoise.loop = true;
-
-    return whiteNoise;
+    return audioRef.current;
   }, []);
 
   const play = useCallback(async () => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    const audio = getAudio();
 
-    const audioContext = audioContextRef.current;
-
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
-    }
-
-    if (noiseNodeRef.current) {
-      noiseNodeRef.current.stop();
-    }
-
-    const noiseNode = createWhiteNoise(audioContext);
-    const gainNode = audioContext.createGain();
-    gainNode.gain.value = 0.5;
-
-    noiseNode.connect(gainNode);
-
-    // Create MediaStream destination for background playback on mobile
-    // This pipes audio to an <audio> element which browsers allow in background
-    if (!mediaStreamDestRef.current) {
-      mediaStreamDestRef.current = audioContext.createMediaStreamDestination();
-    }
-
-    if (!audioElementRef.current) {
-      audioElementRef.current = new Audio();
-      audioElementRef.current.srcObject = mediaStreamDestRef.current.stream;
-      audioElementRef.current.loop = true;
-    }
-
-    // Connect to both destinations
-    gainNode.connect(audioContext.destination);
-    gainNode.connect(mediaStreamDestRef.current);
-
-    noiseNode.start();
-
-    // Play through audio element for background support
     try {
-      await audioElementRef.current.play();
+      await audio.play();
+      setIsPlaying(true);
+
+      // Set up Media Session for lock screen controls
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'White Noise',
+          artist: 'White Noise App',
+          album: 'Sleep Sounds',
+        });
+
+        navigator.mediaSession.setActionHandler('play', () => play());
+        navigator.mediaSession.setActionHandler('pause', () => stop());
+        navigator.mediaSession.setActionHandler('stop', () => stop());
+      }
     } catch (e) {
-      console.log('Audio element play failed, falling back to Web Audio only');
+      console.error('Playback failed:', e);
     }
-
-    noiseNodeRef.current = noiseNode;
-    gainNodeRef.current = gainNode;
-    setIsPlaying(true);
-
-    // Set up Media Session for lock screen controls
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'White Noise',
-        artist: 'White Noise App',
-        album: 'Sleep Sounds',
-      });
-
-      navigator.mediaSession.setActionHandler('play', () => play());
-      navigator.mediaSession.setActionHandler('pause', () => stop());
-      navigator.mediaSession.setActionHandler('stop', () => stop());
-    }
-  }, [createWhiteNoise]);
+  }, [getAudio]);
 
   const stop = useCallback(() => {
-    if (noiseNodeRef.current) {
-      noiseNodeRef.current.stop();
-      noiseNodeRef.current = null;
-    }
-    if (audioElementRef.current) {
-      audioElementRef.current.pause();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
     }
     setIsPlaying(false);
   }, []);
@@ -110,15 +96,11 @@ export function useWhiteNoise() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (noiseNodeRef.current) {
-        noiseNodeRef.current.stop();
+      if (audioRef.current) {
+        audioRef.current.pause();
       }
-      if (audioElementRef.current) {
-        audioElementRef.current.pause();
-        audioElementRef.current.srcObject = null;
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
       }
     };
   }, []);
