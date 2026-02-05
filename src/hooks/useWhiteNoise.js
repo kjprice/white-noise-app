@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-function generateWhiteNoiseWav(durationSeconds = 30, sampleRate = 44100) {
+function generateWhiteNoiseWav(durationSeconds = 5, sampleRate = 44100) {
   const numSamples = durationSeconds * sampleRate;
   const fadeLength = Math.floor(sampleRate * 0.5); // 0.5 second crossfade
   const buffer = new ArrayBuffer(44 + numSamples * 2);
@@ -62,7 +62,7 @@ export function useWhiteNoise() {
 
   const getAudio = useCallback(() => {
     if (!audioRef.current) {
-      const blob = generateWhiteNoiseWav(30);
+      const blob = generateWhiteNoiseWav(5);
       blobUrlRef.current = URL.createObjectURL(blob);
 
       audioRef.current = new Audio(blobUrlRef.current);
