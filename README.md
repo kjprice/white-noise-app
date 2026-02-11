@@ -121,7 +121,7 @@ When looping audio in a web browser using the HTML5 `<audio>` element's `loop` a
 | **Web Audio API with seamless loop** | Perfect loop, but stops when screen locks | AudioContext gets suspended on mobile when app backgrounds |
 | **MediaStreamDestination + Audio Element** | Jittery audio | AudioContext suspension causes stuttering as it repeatedly suspends/resumes |
 | **Crossfade techniques** | Still had gaps | The gap is in the browser's loop implementation, not the audio content |
-| **10-minute audio buffer** | ✅ Works (current solution) | Gap only occurs every 10 minutes, which is acceptable for a sleep app |
+| **1-hour audio buffer** | ✅ Works (current solution) | Gap only occurs every hour, which is acceptable for a sleep app |
 
 ### How Native App Solves This
 
@@ -133,7 +133,7 @@ The React Native app uses **expo-av** with native audio APIs:
 
 ### Current Implementation
 
-**Web:** Generates a 10-minute white noise buffer. The loop gap occurs every 10 minutes, which is barely noticeable for a sleep app.
+**Web:** Generates a 1-hour white noise buffer. The loop gap occurs every hour, which is barely noticeable for a sleep app.
 
 **Native:** Generates a 10-second buffer with true gapless looping via native audio APIs.
 

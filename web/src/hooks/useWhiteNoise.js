@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 // Generate a long white noise WAV file
-// 10 minutes = rare loop gaps, acceptable for sleep
-function generateWhiteNoiseWav(durationSeconds = 600, sampleRate = 22050) {
+// 1 hour = very rare loop gaps, acceptable for sleep
+function generateWhiteNoiseWav(durationSeconds = 3600, sampleRate = 22050) {
   // Lower sample rate = smaller file, still sounds fine for noise
   const numSamples = durationSeconds * sampleRate;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
@@ -46,7 +46,7 @@ export function useWhiteNoise() {
   const getAudio = useCallback(() => {
     if (!audioRef.current) {
       setIsLoading(true);
-      const blob = generateWhiteNoiseWav(600); // 10 minutes
+      const blob = generateWhiteNoiseWav(3600); // 1 hour
       blobUrlRef.current = URL.createObjectURL(blob);
 
       audioRef.current = new Audio(blobUrlRef.current);
