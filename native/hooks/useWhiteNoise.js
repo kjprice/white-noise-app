@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 
-// Generate white noise as a WAV data URI
-function generateWhiteNoiseDataUri(durationSeconds = 10, sampleRate = 22050) {
+// Generate white noise and save as WAV file
+async function generateWhiteNoiseFile(durationSeconds = 3600, sampleRate = 22050) {
   const numSamples = durationSeconds * sampleRate;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
@@ -32,7 +33,7 @@ function generateWhiteNoiseDataUri(durationSeconds = 10, sampleRate = 22050) {
     view.setInt16(44 + i * 2, sample, true);
   }
 
-  // Convert to base64
+  // Convert to base64 for file writing
   const bytes = new Uint8Array(buffer);
   let binary = '';
   for (let i = 0; i < bytes.byteLength; i++) {
@@ -40,7 +41,13 @@ function generateWhiteNoiseDataUri(durationSeconds = 10, sampleRate = 22050) {
   }
   const base64 = btoa(binary);
 
-  return `data:audio/wav;base64,${base64}`;
+  // Save to file system
+  const fileUri = `${FileSystem.cacheDirectory}white-noise.wav`;
+  await FileSystem.writeAsStringAsync(fileUri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  return fileUri;
 }
 
 export function useWhiteNoise() {
@@ -73,9 +80,10 @@ export function useWhiteNoise() {
       setIsLoading(true);
 
       if (!soundRef.current) {
-        const dataUri = generateWhiteNoiseDataUri(10);
+        // Generate and save 1-hour white noise file
+        const fileUri = await generateWhiteNoiseFile(3600);
         const { sound } = await Audio.Sound.createAsync(
-          { uri: dataUri },
+          { uri: fileUri },
           {
             isLooping: true,
             volume: 0.5,
