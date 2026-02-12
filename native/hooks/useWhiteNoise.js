@@ -2,8 +2,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 
-// Generate white noise and save as WAV file
-async function generateWhiteNoiseFile(durationSeconds = 3600, sampleRate = 22050) {
+// Generate seamlessly loopable white noise and save as WAV file
+// Uses crossfade technique to eliminate discontinuities at loop point
+async function generateWhiteNoiseFile(durationSeconds = 60, sampleRate = 22050) {
   const numSamples = durationSeconds * sampleRate;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
@@ -14,13 +15,14 @@ async function generateWhiteNoiseFile(durationSeconds = 3600, sampleRate = 22050
     }
   };
 
+  // WAV header
   writeString(0, 'RIFF');
   view.setUint32(4, 36 + numSamples * 2, true);
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true);
@@ -28,9 +30,32 @@ async function generateWhiteNoiseFile(durationSeconds = 3600, sampleRate = 22050
   writeString(36, 'data');
   view.setUint32(40, numSamples * 2, true);
 
+  // Generate white noise samples
+  const samples = new Int16Array(numSamples);
   for (let i = 0; i < numSamples; i++) {
-    const sample = (Math.random() * 2 - 1) * 0.5 * 32767;
-    view.setInt16(44 + i * 2, sample, true);
+    samples[i] = Math.floor((Math.random() * 2 - 1) * 0.5 * 32767);
+  }
+
+  // Crossfade the loop point: last 50ms with first 50ms
+  // This creates a seamless transition when looping
+  const crossfadeSamples = Math.floor(sampleRate * 0.05); // 50ms
+
+  for (let i = 0; i < crossfadeSamples; i++) {
+    const fadePosition = i / crossfadeSamples; // 0 to 1
+    const fadeOut = 1 - fadePosition;
+    const fadeIn = fadePosition;
+
+    const startIndex = i;
+    const endIndex = numSamples - crossfadeSamples + i;
+
+    // Blend the end samples with the beginning samples
+    const blended = samples[startIndex] * fadeIn + samples[endIndex] * fadeOut;
+    samples[endIndex] = Math.floor(blended);
+  }
+
+  // Write samples to buffer
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, samples[i], true);
   }
 
   // Convert to base64 for file writing
@@ -42,7 +67,7 @@ async function generateWhiteNoiseFile(durationSeconds = 3600, sampleRate = 22050
   const base64 = btoa(binary);
 
   // Save to file system
-  const fileUri = `${FileSystem.cacheDirectory}white-noise.wav`;
+  const fileUri = `${FileSystem.cacheDirectory}white-noise-seamless.wav`;
   await FileSystem.writeAsStringAsync(fileUri, base64, {
     encoding: FileSystem.EncodingType.Base64,
   });
@@ -80,8 +105,9 @@ export function useWhiteNoise() {
       setIsLoading(true);
 
       if (!soundRef.current) {
-        // Generate and save 1-hour white noise file
-        const fileUri = await generateWhiteNoiseFile(3600);
+        // Generate seamlessly loopable white noise (60 seconds)
+        // Crossfade technique eliminates the gap at loop point
+        const fileUri = await generateWhiteNoiseFile(60);
         const { sound } = await Audio.Sound.createAsync(
           { uri: fileUri },
           {
