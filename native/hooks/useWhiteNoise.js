@@ -2,9 +2,64 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 
-// Generate seamlessly loopable white noise and save as WAV file
+// Apply brown noise filter (integration/running sum)
+function applyBrownFilter(samples) {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] / 32767;
+    samples[i] = Math.floor(Math.max(-1, Math.min(1, sum / 50)) * 32767);
+  }
+}
+
+// Apply pink noise filter (Paul Kellet's algorithm)
+function applyPinkFilter(samples) {
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+
+  for (let i = 0; i < samples.length; i++) {
+    const white = samples[i] / 32767;
+
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.96900 * b2 + white * 0.1538520;
+    b3 = 0.86650 * b3 + white * 0.3104856;
+    b4 = 0.55000 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.0168980;
+
+    const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+    b6 = white * 0.115926;
+
+    samples[i] = Math.floor(Math.max(-1, Math.min(1, pink * 0.11)) * 32767);
+  }
+}
+
+// Apply blue noise filter (differentiation with normalization)
+function applyBlueFilter(samples) {
+  // First pass: differentiate
+  const temp = new Int16Array(samples.length);
+  let prev = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const current = samples[i];
+    temp[i] = current - prev;
+    prev = current;
+  }
+
+  // Find max amplitude for normalization
+  let maxAmp = 0;
+  for (let i = 0; i < temp.length; i++) {
+    const abs = Math.abs(temp[i]);
+    if (abs > maxAmp) maxAmp = abs;
+  }
+
+  // Normalize to use full dynamic range
+  const scale = maxAmp > 0 ? (32767 * 0.5) / maxAmp : 1;
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = Math.floor(temp[i] * scale);
+  }
+}
+
+// Generate seamlessly loopable colored noise and save as WAV file
 // Uses crossfade technique to eliminate discontinuities at loop point
-async function generateWhiteNoiseFile(durationSeconds = 60, sampleRate = 22050) {
+async function generateNoiseFile(noiseType = 'white', durationSeconds = 60, sampleRate = 22050) {
   const numSamples = durationSeconds * sampleRate;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
@@ -30,10 +85,27 @@ async function generateWhiteNoiseFile(durationSeconds = 60, sampleRate = 22050) 
   writeString(36, 'data');
   view.setUint32(40, numSamples * 2, true);
 
-  // Generate white noise samples
+  // Generate white noise samples (base for all noise types)
   const samples = new Int16Array(numSamples);
   for (let i = 0; i < numSamples; i++) {
     samples[i] = Math.floor((Math.random() * 2 - 1) * 0.5 * 32767);
+  }
+
+  // Apply color filter
+  switch (noiseType) {
+    case 'brown':
+      applyBrownFilter(samples);
+      break;
+    case 'pink':
+      applyPinkFilter(samples);
+      break;
+    case 'blue':
+      applyBlueFilter(samples);
+      break;
+    case 'white':
+    default:
+      // White noise already generated
+      break;
   }
 
   // Aggressive overlap-add for near-seamless looping
@@ -90,7 +162,7 @@ async function generateWhiteNoiseFile(durationSeconds = 60, sampleRate = 22050) 
 
   // Save to file system with timestamp to avoid cached corrupted files
   const timestamp = Date.now();
-  const fileUri = `${FileSystem.cacheDirectory}white-noise-${timestamp}.wav`;
+  const fileUri = `${FileSystem.cacheDirectory}${noiseType}-noise-${timestamp}.wav`;
 
   console.log('Writing file to:', fileUri);
   await FileSystem.writeAsStringAsync(fileUri, base64, {
@@ -104,6 +176,7 @@ async function generateWhiteNoiseFile(durationSeconds = 60, sampleRate = 22050) 
 export function useWhiteNoise() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [noiseType, setNoiseType] = useState('white');
   const sound1Ref = useRef(null);
   const sound2Ref = useRef(null);
   const activeSound = useRef(1); // Track which sound is currently playing
@@ -133,8 +206,8 @@ export function useWhiteNoise() {
   }, []);
 
   // Helper function to generate and load a fresh sound
-  const generateAndLoadSound = useCallback(async () => {
-    const fileUri = await generateWhiteNoiseFile(10);
+  const generateAndLoadSound = useCallback(async (type) => {
+    const fileUri = await generateNoiseFile(type, 10);
     const { sound } = await Audio.Sound.createAsync(
       { uri: fileUri },
       { volume: 0.5, shouldPlay: false }
@@ -164,7 +237,7 @@ export function useWhiteNoise() {
   }, []);
 
   // Set up procedural generation with overlapping crossfade
-  const setupProceduralGeneration = useCallback((sound1, sound2) => {
+  const setupProceduralGeneration = useCallback((sound1, sound2, type) => {
     const durationMillis = 10000; // 10 seconds
     const crossfadeStart = durationMillis - 1000; // Start crossfade 1 second before end
 
@@ -176,11 +249,11 @@ export function useWhiteNoise() {
         try {
           // Unload old sound2 and generate fresh audio
           await sound2.unloadAsync();
-          const newSound2 = await generateAndLoadSound();
+          const newSound2 = await generateAndLoadSound(type);
           sound2Ref.current = newSound2;
 
           // Set up the callback for the new sound
-          setupProceduralGeneration(sound1, newSound2);
+          setupProceduralGeneration(sound1, newSound2, type);
 
           // Start sound2 at 0 volume
           await newSound2.setVolumeAsync(0);
@@ -211,11 +284,11 @@ export function useWhiteNoise() {
         try {
           // Unload old sound1 and generate fresh audio
           await sound1.unloadAsync();
-          const newSound1 = await generateAndLoadSound();
+          const newSound1 = await generateAndLoadSound(type);
           sound1Ref.current = newSound1;
 
           // Set up the callback for the new sound
-          setupProceduralGeneration(newSound1, sound2);
+          setupProceduralGeneration(newSound1, sound2, type);
 
           // Start sound1 at 0 volume
           await newSound1.setVolumeAsync(0);
@@ -237,7 +310,7 @@ export function useWhiteNoise() {
         isGenerating.current = false;
       }
     });
-  }, [generateAndLoadSound, crossfadeSounds]);
+  }, [generateAndLoadSound, crossfadeSounds, noiseType]);
 
   const play = useCallback(async () => {
     try {
@@ -247,14 +320,14 @@ export function useWhiteNoise() {
         console.log('Starting procedural audio generation...');
 
         // Generate initial two audio chunks
-        const sound1 = await generateAndLoadSound();
-        const sound2 = await generateAndLoadSound();
+        const sound1 = await generateAndLoadSound(noiseType);
+        const sound2 = await generateAndLoadSound(noiseType);
 
         sound1Ref.current = sound1;
         sound2Ref.current = sound2;
 
         // Set up continuous procedural generation
-        setupProceduralGeneration(sound1, sound2);
+        setupProceduralGeneration(sound1, sound2, noiseType);
 
         console.log('Starting playback...');
         await sound1.playAsync();
@@ -274,7 +347,7 @@ export function useWhiteNoise() {
     } finally {
       setIsLoading(false);
     }
-  }, [generateAndLoadSound, setupProceduralGeneration]);
+  }, [generateAndLoadSound, setupProceduralGeneration, noiseType]);
 
   const stop = useCallback(async () => {
     if (sound1Ref.current) {
@@ -294,5 +367,29 @@ export function useWhiteNoise() {
     }
   }, [isPlaying, play, stop]);
 
-  return { isPlaying, isLoading, play, stop, toggle };
+  const changeNoiseType = useCallback(async (newType) => {
+    setNoiseType(newType);
+
+    // If currently playing, regenerate audio with new type
+    if (isPlaying) {
+      await stop();
+
+      // Clean up old sounds
+      if (sound1Ref.current) {
+        await sound1Ref.current.unloadAsync();
+        sound1Ref.current = null;
+      }
+      if (sound2Ref.current) {
+        await sound2Ref.current.unloadAsync();
+        sound2Ref.current = null;
+      }
+
+      // Restart with new type after a brief delay
+      setTimeout(() => {
+        play();
+      }, 100);
+    }
+  }, [isPlaying, stop, play]);
+
+  return { isPlaying, isLoading, play, stop, toggle, noiseType, changeNoiseType };
 }

@@ -1,29 +1,22 @@
 # White Noise App
 
-A simple white noise app for sleep. Available as a web app and native mobile app (iOS & Android).
+A simple white noise app for sleep, built as a native mobile app (iOS & Android).
+
+> **⚠️ Note:** The web app version has fundamental browser limitations with gapless audio looping and is no longer maintained. All development focuses on the native app.
 
 ## Project Structure
 
 ```
 white-noise-app/
-├── web/          # React web app (GitHub Pages)
-└── native/       # Expo React Native app (iOS & Android)
+├── native/       # ✅ Native iOS & Android app (MAINTAINED)
+└── web/          # ❌ Web app (NOT MAINTAINED - known audio gaps)
 ```
 
-## Web App
+## Web App (DEPRECATED)
 
-**Live:** https://kjprice.github.io/white-noise-app
+⚠️ **Not maintained due to unfixable browser audio limitations.** See "Technical Notes" below.
 
-| Script | Description |
-|--------|-------------|
-| `./bin/dev.sh` | Start local dev server |
-| `./bin/deploy.sh` | Build and deploy to GitHub Pages |
-
-```bash
-cd web
-npm install
-./bin/dev.sh
-```
+~~**Live:** https://kjprice.github.io/white-noise-app~~
 
 ## Native App (iOS & Android)
 
