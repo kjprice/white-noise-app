@@ -67,9 +67,9 @@ export function useWhiteNoise() {
   const getAudio = useCallback(() => {
     if (!audioRef.current) {
       setIsLoading(true);
-      // Generate 60-second seamlessly loopable white noise
+      // Generate 10-second seamlessly loopable white noise (for easy testing)
       // Crossfade technique eliminates the gap at loop point
-      const blob = generateSeamlessWhiteNoise(60);
+      const blob = generateSeamlessWhiteNoise(10);
       blobUrlRef.current = URL.createObjectURL(blob);
 
       audioRef.current = new Audio(blobUrlRef.current);
