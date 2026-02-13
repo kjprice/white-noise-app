@@ -61,30 +61,139 @@ function generateSeamlessWhiteNoise(durationSeconds = 60, sampleRate = 22050) {
 export function useWhiteNoise() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const audioRef = useRef(null);
-  const blobUrlRef = useRef(null);
+  const audio1Ref = useRef(null);
+  const audio2Ref = useRef(null);
+  const blobUrl1Ref = useRef(null);
+  const blobUrl2Ref = useRef(null);
+  const activeAudio = useRef(1);
+  const isGenerating = useRef(false);
 
-  const getAudio = useCallback(() => {
-    if (!audioRef.current) {
-      setIsLoading(true);
-      // Generate 10-second seamlessly loopable white noise (for easy testing)
-      // Crossfade technique eliminates the gap at loop point
-      const blob = generateSeamlessWhiteNoise(10);
-      blobUrlRef.current = URL.createObjectURL(blob);
-
-      audioRef.current = new Audio(blobUrlRef.current);
-      audioRef.current.loop = true;
-      audioRef.current.volume = 0.5;
-      setIsLoading(false);
-    }
-    return audioRef.current;
+  const generateAndCreateAudio = useCallback(() => {
+    const blob = generateSeamlessWhiteNoise(10);
+    const blobUrl = URL.createObjectURL(blob);
+    const audio = new Audio(blobUrl);
+    audio.volume = 0.5;
+    return { audio, blobUrl };
   }, []);
 
-  const play = useCallback(async () => {
-    const audio = getAudio();
+  const crossfadeAudios = useCallback(async (fadeOutAudio, fadeInAudio, duration = 1000) => {
+    const steps = 50;
+    const stepDuration = duration / steps;
 
+    for (let i = 0; i <= steps; i++) {
+      const progress = i / steps;
+      fadeOutAudio.volume = 0.5 * (1 - progress);
+      fadeInAudio.volume = 0.5 * progress;
+
+      if (i < steps) {
+        await new Promise(resolve => setTimeout(resolve, stepDuration));
+      }
+    }
+  }, []);
+
+  const setupCrossfade = useCallback((audio1, audio2) => {
+    const duration = 10; // 10 seconds
+    const crossfadeStart = duration - 1; // Start crossfade 1 second before end
+
+    const checkAudio1 = () => {
+      if (audio1.currentTime >= crossfadeStart && activeAudio.current === 1 && !isGenerating.current) {
+        isGenerating.current = true;
+        console.log('Starting crossfade to audio2...');
+
+        // Generate fresh audio2
+        if (blobUrl2Ref.current) {
+          URL.revokeObjectURL(blobUrl2Ref.current);
+        }
+
+        const { audio: newAudio2, blobUrl: newBlobUrl2 } = generateAndCreateAudio();
+        audio2Ref.current = newAudio2;
+        blobUrl2Ref.current = newBlobUrl2;
+
+        // Set up crossfade for new audio
+        setupCrossfade(audio1, newAudio2);
+
+        // Start audio2 at 0 volume and play
+        newAudio2.volume = 0;
+        newAudio2.play();
+
+        // Crossfade
+        crossfadeAudios(audio1, newAudio2, 1000).then(() => {
+          activeAudio.current = 2;
+          audio1.pause();
+          audio1.currentTime = 0;
+          audio1.volume = 0.5;
+          isGenerating.current = false;
+        });
+      }
+    };
+
+    const checkAudio2 = () => {
+      if (audio2.currentTime >= crossfadeStart && activeAudio.current === 2 && !isGenerating.current) {
+        isGenerating.current = true;
+        console.log('Starting crossfade to audio1...');
+
+        // Generate fresh audio1
+        if (blobUrl1Ref.current) {
+          URL.revokeObjectURL(blobUrl1Ref.current);
+        }
+
+        const { audio: newAudio1, blobUrl: newBlobUrl1 } = generateAndCreateAudio();
+        audio1Ref.current = newAudio1;
+        blobUrl1Ref.current = newBlobUrl1;
+
+        // Set up crossfade for new audio
+        setupCrossfade(newAudio1, audio2);
+
+        // Start audio1 at 0 volume and play
+        newAudio1.volume = 0;
+        newAudio1.play();
+
+        // Crossfade
+        crossfadeAudios(audio2, newAudio1, 1000).then(() => {
+          activeAudio.current = 1;
+          audio2.pause();
+          audio2.currentTime = 0;
+          audio2.volume = 0.5;
+          isGenerating.current = false;
+        });
+      }
+    };
+
+    audio1.addEventListener('timeupdate', checkAudio1);
+    audio2.addEventListener('timeupdate', checkAudio2);
+  }, [generateAndCreateAudio, crossfadeAudios]);
+
+  const play = useCallback(async () => {
     try {
-      await audio.play();
+      if (!audio1Ref.current) {
+        setIsLoading(true);
+        console.log('Starting procedural audio generation...');
+
+        // Generate initial two audio chunks
+        const { audio: audio1, blobUrl: blobUrl1 } = generateAndCreateAudio();
+        const { audio: audio2, blobUrl: blobUrl2 } = generateAndCreateAudio();
+
+        audio1Ref.current = audio1;
+        audio2Ref.current = audio2;
+        blobUrl1Ref.current = blobUrl1;
+        blobUrl2Ref.current = blobUrl2;
+
+        // Set up continuous procedural generation with crossfade
+        setupCrossfade(audio1, audio2);
+
+        console.log('Starting playback...');
+        await audio1.play();
+        activeAudio.current = 1;
+        setIsLoading(false);
+      } else {
+        // Resume playback
+        if (activeAudio.current === 1) {
+          await audio1Ref.current.play();
+        } else {
+          await audio2Ref.current.play();
+        }
+      }
+
       setIsPlaying(true);
 
       if ('mediaSession' in navigator) {
@@ -100,12 +209,14 @@ export function useWhiteNoise() {
     } catch (e) {
       console.error('Playback failed:', e);
     }
-  }, [getAudio]);
+  }, [generateAndCreateAudio, setupCrossfade]);
 
   const stop = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (audio1Ref.current) {
+      audio1Ref.current.pause();
+    }
+    if (audio2Ref.current) {
+      audio2Ref.current.pause();
     }
     setIsPlaying(false);
   }, []);
@@ -120,11 +231,17 @@ export function useWhiteNoise() {
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
+      if (audio1Ref.current) {
+        audio1Ref.current.pause();
       }
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
+      if (audio2Ref.current) {
+        audio2Ref.current.pause();
+      }
+      if (blobUrl1Ref.current) {
+        URL.revokeObjectURL(blobUrl1Ref.current);
+      }
+      if (blobUrl2Ref.current) {
+        URL.revokeObjectURL(blobUrl2Ref.current);
       }
     };
   }, []);
